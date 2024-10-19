@@ -5,7 +5,7 @@
 debug: true
 
 # Use this to change the Rust version used to run your code
-# on Codecrafters.
+# on Codecrafters.i
 #
 # Available versions: rust-1.80
 language_pack: rust-1.80

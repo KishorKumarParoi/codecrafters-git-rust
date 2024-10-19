@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
@@ -10,33 +11,48 @@ use std::io::prelude::*;
 use std::io::{self, Read};
 use std::path::Path;
 
-/*The output of git write-tree is the 40-char
-SHA hash of the tree object that was written to .git/objects.
+/*
+# Create a new directory and cd into it
+$ mkdir test_dir && cd test_dir
 
-To implement this, you'll need to:
+# Initialize a new git repository
+$ git init
+Initialized empty Git repository in /path/to/test_dir/.git/
 
-Iterate over the files/directories in the working directory
+# Create a tree, get its SHA
+$ echo "hello world" > test.txt
+$ git add test.txt
+$ git write-tree
+4b825dc642cb6eb9a060e54bf8d69288fbee4904
 
-If the entry is a file, create a blob object and record its SHA hash
+# Create the initial commit
+$ git commit-tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -m "Initial commit"
+3b18e512dba79e4c8300dd08aeb37f8e728b8dad
 
-If the entry is a directory, recursively create a tree
-object and record its SHA hash
+# Write some changes, get another tree SHA
+$ echo "hello world 2" > test.txt
+$ git add test.txt
+$ git write-tree
+5b825dc642cb6eb9a060e54bf8d69288fbee4904
 
-Once you have all the entries and their SHA hashes, write
- the tree object to the .git/objects directory
+# Create a new commit with the new tree SHA
+$ git commit-tree 5b825dc642cb6eb9a060e54bf8d69288fbee4904 -p 3b18e512dba79e4c8300dd08aeb37f8e728b8dad -m "Second commit"
 
-If you're testing this against git locally, make sure to
- run git add . before git write-tree, so that all files in the working directory are staged.
+/// Tests
+Your program will be invoked like this:
+
+$ ./your_program.sh commit-tree <tree_sha> -p <commit_sha> -m <message>
+Your program must create a commit object and print its 40-char SHA to stdout.
+
+To keep things simple:
+
+You'll receive exactly one parent commit
+You'll receive exactly one line in the message
+You're free to hardcode any valid name/email for the author/committer fields
+To verify your changes, the tester will read the commit object from the .git directory. It'll use the git show command to do this.
 */
 
 //[CONTINUATION PROJECT] - IMPLEMENTATING GIT FROM SCRATCH
-
-pub enum GitObject {
-    Blob(Vec<u8>),
-    Tree(Vec<GitTreeEntry>),
-    Commit,
-    Tag,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 
@@ -187,12 +203,70 @@ fn main() -> io::Result<()> {
             let tree_sha = write_tree(Path::new("."))?;
             print!("{}", tree_sha.to_hex());
         }
+        "commit-tree" => {
+            // Check if the user has provided the tree sha
+            if args.len() < 3 {
+                eprintln!(
+                    "Usage: {} commit-tree <tree_sha> -p <commit_sha> -m <message>",
+                    args[0]
+                );
+                return Ok(());
+            }
+
+            let tree_sha = &args[2];
+            let parent_sha = Some(&args[4]);
+            let message = &args[6];
+            let author = "Rohit Paul <Rohit.paul@gmail.com>";
+            let committer = "Kishor Kumar Paroi <kishor.ruet.cse@gmail.com>";
+
+            let commit_data =
+                create_commit_object(tree_sha, parent_sha, author, committer, message);
+            let commit_hash = write_commit_object(&commit_data)?;
+
+            println!("{}", commit_hash.to_hex());
+        }
+
         _ => {
             eprintln!("Unknown command: {}", args[1]);
         }
     }
 
     Ok(())
+}
+
+fn write_commit_object(commit_data: &str) -> io::Result<Hash> {
+    let commit_bytes = commit_data.as_bytes();
+    let header = format!("commit {}\0", commit_bytes.len());
+    let full_commit_data = [header.as_bytes(), commit_bytes].concat();
+
+    let hash = compute_sha1(&full_commit_data);
+    write_object(&hash, &full_commit_data)?;
+    Ok(hash)
+}
+
+fn get_current_time() -> String {
+    let now: DateTime<Utc> = Utc::now();
+    now.format("%a %b %e %H:%M:%S %Y %z").to_string()
+}
+
+fn create_commit_object(
+    tree_sha: &str,
+    parent_sha: Option<&String>,
+    author: &str,
+    committer: &str,
+    message: &str,
+) -> String {
+    let mut commit_data = format!("tree {}\n", tree_sha);
+
+    if let Some(parent) = parent_sha {
+        commit_data.push_str(&format!("parent {}\n", parent));
+    }
+
+    commit_data.push_str(&format!("author {} {}\n", author, get_current_time()));
+    commit_data.push_str(&format!("committer {} {}\n", committer, get_current_time()));
+    commit_data.push_str(&format!("\n{}\n", message));
+
+    commit_data
 }
 
 fn write_tree(path: &Path) -> io::Result<Hash> {
@@ -246,13 +320,6 @@ fn write_tree(path: &Path) -> io::Result<Hash> {
     let hash = compute_sha1(&result);
     write_object(&hash, &result)?;
     Ok(hash)
-}
-
-fn hex_decode(hex_str: &str) -> io::Result<Vec<u8>> {
-    match hex::decode(hex_str) {
-        Ok(bytes) => Ok(bytes),
-        Err(e) => Err(io::Error::new(io::ErrorKind::InvalidData, e)),
-    }
 }
 
 fn compute_sha1(data: &[u8]) -> Hash {
