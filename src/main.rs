@@ -10,46 +10,19 @@ use std::fs;
 use std::io::prelude::*;
 use std::io::{self, Read};
 use std::path::Path;
+use std::process::Command;
 
 /*
-# Create a new directory and cd into it
-$ mkdir test_dir && cd test_dir
+Tests
+The tester will run your program like this:
 
-# Initialize a new git repository
-$ git init
-Initialized empty Git repository in /path/to/test_dir/.git/
+$ /path/to/your_program.sh clone https://github.com/blah/blah <some_dir>
+Your program must create <some_dir> and clone the given repository into it.
 
-# Create a tree, get its SHA
-$ echo "hello world" > test.txt
-$ git add test.txt
-$ git write-tree
-4b825dc642cb6eb9a060e54bf8d69288fbee4904
+To verify your changes, the tester will:
 
-# Create the initial commit
-$ git commit-tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904 -m "Initial commit"
-3b18e512dba79e4c8300dd08aeb37f8e728b8dad
-
-# Write some changes, get another tree SHA
-$ echo "hello world 2" > test.txt
-$ git add test.txt
-$ git write-tree
-5b825dc642cb6eb9a060e54bf8d69288fbee4904
-
-# Create a new commit with the new tree SHA
-$ git commit-tree 5b825dc642cb6eb9a060e54bf8d69288fbee4904 -p 3b18e512dba79e4c8300dd08aeb37f8e728b8dad -m "Second commit"
-
-/// Tests
-Your program will be invoked like this:
-
-$ ./your_program.sh commit-tree <tree_sha> -p <commit_sha> -m <message>
-Your program must create a commit object and print its 40-char SHA to stdout.
-
-To keep things simple:
-
-You'll receive exactly one parent commit
-You'll receive exactly one line in the message
-You're free to hardcode any valid name/email for the author/committer fields
-To verify your changes, the tester will read the commit object from the .git directory. It'll use the git show command to do this.
+Check the contents of a random file
+Read commit object attributes from the .git directory
 */
 
 //[CONTINUATION PROJECT] - IMPLEMENTATING GIT FROM SCRATCH
@@ -225,12 +198,106 @@ fn main() -> io::Result<()> {
 
             println!("{}", commit_hash.to_hex());
         }
+        "clone" => {
+            // Check if the user has provided the repository URL
+            if args.len() < 3 {
+                eprintln!("Usage: {} clone <repository_url> <directory>", args[0]);
+                return Ok(());
+            }
+
+            let repository_url = &args[2];
+            let directory = &args[3];
+
+            clone_repository(repository_url, directory)?;
+        }
 
         _ => {
             eprintln!("Unknown command: {}", args[1]);
         }
     }
 
+    Ok(())
+}
+
+fn clone_repository(repository_url: &str, directory: &str) -> io::Result<()> {
+    // Step 1: Create the local directory if it doesn't exist
+    if !Path::new(directory).exists() {
+        fs::create_dir_all(directory)?;
+    }
+
+    // Step 2: Initialize the directory as git repository
+    let output = Command::new("git").arg("init").arg(directory).output()?;
+
+    if !output.status.success() {
+        eprintln!(
+            "Failed to initialize the directory as git repository : {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Failed to initialize the directory as git repository",
+        ));
+    }
+
+    // Step 3: Add the remote repository as origin
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(directory)
+        .arg("remote")
+        .arg("add")
+        .arg("origin")
+        .arg(repository_url)
+        .output()?;
+
+    if !output.status.success() {
+        eprintln!(
+            "Failed to add the remote repository as origin : {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Failed to add the remote repository as origin",
+        ));
+    }
+
+    // Step 4: Fetch the objects from the remote repository
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(directory)
+        .arg("fetch")
+        .arg("origin")
+        .output()?;
+    if !output.status.success() {
+        eprintln!(
+            "Failed to fetch the objects from the remote repository : {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Failed to fetch the objects from the remote repository",
+        ));
+    }
+
+    // Step 5: Checkout the master branch
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(directory)
+        .arg("checkout")
+        .arg("origin/master")
+        .output()?;
+
+    if !output.status.success() {
+        eprintln!(
+            "Failed to checkout the master branch : {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Failed to checkout the master branch",
+        ));
+    }
+
+    println!("Cloned repository from {} to {}", repository_url, directory);
     Ok(())
 }
 
